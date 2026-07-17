@@ -25,68 +25,35 @@ Cast.
   <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
   <!-- Cast Debug Logger -->
   <!--<script src="//www.gstatic.com/cast/sdk/libs/devtools/debug_layer/caf_receiver_logger.js"></script>-->
+  <style>
+    #dashboard-frame {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: #000;
+      z-index: 999;
+    }
+
+    /* The CAF framework re-shows its player UI when media loads - on touch
+       devices (Nest Hub) via an injected <touch-controls> overlay. While a
+       dashboard is active both must stay hidden regardless. */
+    body.dashboard-active cast-media-player,
+    body.dashboard-active touch-controls {
+      display: none !important;
+    }
+  </style>
 </head>
 
 <body>
 
   <cast-media-player></cast-media-player>
+  <!-- Shown fullscreen instead of the media player while a dashboard (e.g. a party view) is active -->
+  <iframe id="dashboard-frame" hidden allow="autoplay"></iframe>
 
   <footer>
-    <!--<script src="js/receiver.js" type="module"></script>-->
-    <script>
-      'use strict';
-
-      const context = cast.framework.CastReceiverContext.getInstance();
-      const playerManager = context.getPlayerManager();
-
-      // helper : query elements even deeply within shadow doms
-      function querySelectorDeep(selector, root = document) {
-        let currentRoot = root;
-        let partials = selector.split('::shadow');
-        let elems = currentRoot.querySelectorAll(partials[0]);
-        for (let i = 1; i < partials.length; i++) {
-          let partial = partials[i];
-          let elemsInside = [];
-          for (let j = 0; j < elems.length; j++) {
-            let shadow = elems[j].shadowRoot;
-            if (shadow) {
-              const matchesInShadow = shadow.querySelectorAll(partial);
-              elemsInside = elemsInside.concat([... matchesInShadow]);
-            }
-          }
-          elems = elemsInside;
-        }
-        return elems;
-      }
-
-      // update metadata
-      function updateMetadata(metaData){
-        try {
-          // retrieve current media information
-          const mediaInformation = playerManager.getMediaInformation()
-          // update its metadata
-          mediaInformation.metadata = metaData
-		  // update current media information
-          playerManager.setMediaInformation(mediaInformation)
-        } catch(err){
-          console.warn("updateMetadata error", err)
-        }
-      }
-        
-      // Sender GET_PLAY request
-      playerManager.setMessageInterceptor(
-        cast.framework.messages.MessageType.PLAY, data => {
-          console.log("MSG:PLAY", data)
-          // update Player metadata with data.customData.metadata if any
-          if (data && data.customData && data.customData.metadata)
-            updateMetadata(data.customData.metadata)
-          return data
-        }
-      )
-        
-      context.start();
-
-    </script>
+    <script src="js/receiver.js"></script>
   </footer>
 </body>
 
