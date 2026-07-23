@@ -46,6 +46,8 @@ coexistence and idle-shutdown behavior can be checked in a plain browser
     const stopCalls = [];
     let startOptions = null;
     let playerState = 'IDLE';
+    let connectedSenders = [];         // senders the context reports as connected
+    const contextEventListeners = {};  // context-level listeners (sender connect/disconnect)
 
     let currentMedia = null; // media info as the framework would report it
     const mediaLoads = [];   // every playerManager.load() request
@@ -65,6 +67,8 @@ coexistence and idle-shutdown behavior can be checked in a plain browser
     const mockContext = {
       getPlayerManager() { return mockPlayerManager; },
       addCustomMessageListener(namespace, cb) { customMessageListeners[namespace] = cb; },
+      addEventListener(type, fn) { contextEventListeners[type] = fn; },
+      getSenders() { return connectedSenders; },
       sendCustomMessage(namespace, senderId, data) { sentMessages.push({ namespace, senderId, data }); },
       getDeviceCapabilities() { return { touch_input_supported: touchSupported }; },
       start(options) { startOptions = options; },
@@ -82,7 +86,10 @@ coexistence and idle-shutdown behavior can be checked in a plain browser
           GenericMediaMetadata: function () {},
         },
         events: { EventType: { MEDIA_STATUS: 'MEDIA_STATUS' } },
-        system: { MessageType: { JSON: 'JSON' } },
+        system: {
+          MessageType: { JSON: 'JSON' },
+          EventType: { SENDER_CONNECTED: 'SENDER_CONNECTED', SENDER_DISCONNECTED: 'SENDER_DISCONNECTED' },
+        },
         CastReceiverOptions: function () {},
         CastReceiverContext: { getInstance: () => mockContext },
       },
@@ -121,6 +128,14 @@ coexistence and idle-shutdown behavior can be checked in a plain browser
     check('custom namespace registered as JSON', startOptions && startOptions.customNamespaces[testNs], 'JSON');
     check('idle shutdown timer armed at startup', armedTimers.size, 1);
     check('idle shutdown delay is 300s', [...armedTimers.values()][0].ms, 300000);
+
+    // --- sender-gated idle shutdown: a connected sender keeps the app alive --
+    connectedSenders = [{ id: 'sender-x' }];
+    contextEventListeners['SENDER_CONNECTED']();
+    check('idle shutdown timer cleared while a sender is connected', armedTimers.size, 0);
+    connectedSenders = [];
+    contextEventListeners['SENDER_DISCONNECTED']();
+    check('idle shutdown timer re-armed when last sender disconnects', armedTimers.size, 1);
 
     // --- audio-only flow (no dashboard yet): stock receiver behavior -----
     // no LOAD interceptor anymore: playback state flows in via MEDIA_STATUS
@@ -204,7 +219,7 @@ coexistence and idle-shutdown behavior can be checked in a plain browser
     eventListeners['MEDIA_STATUS']();
     customMessageListeners[testNs]({ senderId: 'sender-1', data: { type: 'hide_dashboard' } });
     check('dashboard iframe hidden after hide_dashboard', frameEl.hidden, true);
-    check('iframe src cleared after hide_dashboard', frameEl.getAttribute('src'), '');
+    check('iframe src set to about:blank after hide_dashboard', frameEl.getAttribute('src'), 'about:blank');
     check('media player visible after hide_dashboard', mpEl.hidden, false);
     check('dashboard-active class removed after hide_dashboard', document.body.classList.contains('dashboard-active'), false);
     check('touch-controls no longer suppressed after hide_dashboard',
