@@ -13,26 +13,6 @@ const dashboardFrameEl = document.getElementById('dashboard-frame');
 
 let idleShutdownTimer = null;
 
-// helper : query elements even deeply within shadow doms
-function querySelectorDeep(selector, root = document) {
-  let currentRoot = root;
-  let partials = selector.split('::shadow');
-  let elems = currentRoot.querySelectorAll(partials[0]);
-  for (let i = 1; i < partials.length; i++) {
-    let partial = partials[i];
-    let elemsInside = [];
-    for (let j = 0; j < elems.length; j++) {
-      let shadow = elems[j].shadowRoot;
-      if (shadow) {
-        const matchesInShadow = shadow.querySelectorAll(partial);
-        elemsInside = elemsInside.concat([... matchesInShadow]);
-      }
-    }
-    elems = elemsInside;
-  }
-  return elems;
-}
-
 // update metadata
 function updateMetadata(metaData){
   try {
@@ -49,12 +29,14 @@ function updateMetadata(metaData){
 
 // With disableIdleTimeout we must shut down idle audio-only sessions ourselves
 // to keep behavior parity with the stock receiver; a visible dashboard keeps
-// the session alive indefinitely.
+// the session alive indefinitely. Like the stock timeout, we only shut down
+// once no sender is connected - a connected sender keeps the session alive.
 function updateIdleShutdownTimer() {
   const dashboardActive = !dashboardFrameEl.hidden;
   const playerIdle =
     playerManager.getPlayerState() === cast.framework.messages.PlayerState.IDLE;
-  if (!dashboardActive && playerIdle) {
+  const senderConnected = context.getSenders().length > 0;
+  if (!dashboardActive && playerIdle && !senderConnected) {
     if (idleShutdownTimer === null) {
       idleShutdownTimer = setTimeout(() => context.stop(), IDLE_SHUTDOWN_SEC * 1000);
     }
@@ -120,7 +102,8 @@ function stopKeepalive() {
 function hideDashboard() {
   if (dashboardFrameEl.hidden) return;
   dashboardFrameEl.hidden = true;
-  dashboardFrameEl.src = '';
+  // about:blank, not '': an empty src reloads the receiver page inside the iframe
+  dashboardFrameEl.src = 'about:blank';
   mediaPlayerEl.hidden = false;
   document.body.classList.remove('dashboard-active');
   stopKeepalive();
@@ -178,6 +161,16 @@ playerManager.setMessageInterceptor(
 // re-evaluate the idle shutdown on every player state change
 playerManager.addEventListener(
   cast.framework.events.EventType.MEDIA_STATUS,
+  () => updateIdleShutdownTimer()
+);
+
+// a sender (dis)connecting also changes whether we may idle-shut-down
+context.addEventListener(
+  cast.framework.system.EventType.SENDER_CONNECTED,
+  () => updateIdleShutdownTimer()
+);
+context.addEventListener(
+  cast.framework.system.EventType.SENDER_DISCONNECTED,
   () => updateIdleShutdownTimer()
 );
 
