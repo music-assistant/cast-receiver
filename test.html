@@ -1,0 +1,271 @@
+<!--
+Castless test harness for js/receiver.js. Not linked from index.html.
+Stubs the minimal cast.framework surface (plus setTimeout, to observe the
+idle-shutdown timer), loads the real receiver logic, then fires fake
+show_dashboard / LOAD / MEDIA_STATUS events so the audio+dashboard
+coexistence and idle-shutdown behavior can be checked in a plain browser
+(open this file directly, no Cast device or SDK needed).
+-->
+<!DOCTYPE html>
+<html>
+
+<head>
+  <style>
+    #dashboard-frame {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+    #results { font-family: monospace; white-space: pre-wrap; padding: 1em; }
+    .pass { color: green; }
+    .fail { color: red; }
+
+    /* mirrors index.html - keep in sync */
+    body.dashboard-active cast-media-player,
+    body.dashboard-active touch-controls {
+      display: none !important;
+    }
+  </style>
+</head>
+
+<body>
+  <cast-media-player></cast-media-player>
+  <iframe id="dashboard-frame" hidden allow="autoplay"></iframe>
+  <div id="results"></div>
+
+  <script>
+    'use strict';
+
+    // --- minimal cast.framework stub -----------------------------------
+    const customMessageListeners = {};
+    const messageInterceptors = {};
+    const eventListeners = {};
+    const sentMessages = [];
+    const stopCalls = [];
+    let startOptions = null;
+    let playerState = 'IDLE';
+    let connectedSenders = [];         // senders the context reports as connected
+    const contextEventListeners = {};  // context-level listeners (sender connect/disconnect)
+
+    let currentMedia = null; // media info as the framework would report it
+    const mediaLoads = [];   // every playerManager.load() request
+    const playerStopCalls = [];
+
+    const mockPlayerManager = {
+      setMessageInterceptor(type, fn) { messageInterceptors[type] = fn; },
+      addEventListener(type, fn) { eventListeners[type] = fn; },
+      getPlayerState() { return playerState; },
+      getMediaInformation() { return currentMedia; },
+      setMediaInformation() {},
+      load(request) { mediaLoads.push(request); currentMedia = request.media; },
+      stop() { playerStopCalls.push(true); currentMedia = null; playerState = 'IDLE'; },
+    };
+
+    let touchSupported = true;
+    const mockContext = {
+      getPlayerManager() { return mockPlayerManager; },
+      addCustomMessageListener(namespace, cb) { customMessageListeners[namespace] = cb; },
+      addEventListener(type, fn) { contextEventListeners[type] = fn; },
+      getSenders() { return connectedSenders; },
+      sendCustomMessage(namespace, senderId, data) { sentMessages.push({ namespace, senderId, data }); },
+      getDeviceCapabilities() { return { touch_input_supported: touchSupported }; },
+      start(options) { startOptions = options; },
+      stop() { stopCalls.push(true); },
+    };
+
+    window.cast = {
+      framework: {
+        messages: {
+          MessageType: { PLAY: 'PLAY', LOAD: 'LOAD' },
+          PlayerState: { IDLE: 'IDLE' },
+          StreamType: { NONE: 'NONE' },
+          LoadRequestData: function () {},
+          MediaInformation: function () {},
+          GenericMediaMetadata: function () {},
+        },
+        events: { EventType: { MEDIA_STATUS: 'MEDIA_STATUS' } },
+        system: {
+          MessageType: { JSON: 'JSON' },
+          EventType: { SENDER_CONNECTED: 'SENDER_CONNECTED', SENDER_DISCONNECTED: 'SENDER_DISCONNECTED' },
+        },
+        CastReceiverOptions: function () {},
+        CastReceiverContext: { getInstance: () => mockContext },
+      },
+    };
+
+    // capture the idle-shutdown timer and keepalive interval instead of waiting
+    const armedTimers = new Map();
+    const armedIntervals = new Map();
+    let nextTimerId = 1;
+    window.setTimeout = (fn, ms) => { const id = nextTimerId++; armedTimers.set(id, { fn, ms }); return id; };
+    window.clearTimeout = id => { armedTimers.delete(id); };
+    window.setInterval = (fn, ms) => { const id = nextTimerId++; armedIntervals.set(id, { fn, ms }); return id; };
+    window.clearInterval = id => { armedIntervals.delete(id); };
+  </script>
+
+  <!-- same logic the real receiver page loads -->
+  <script src="js/receiver.js"></script>
+
+  <script>
+    'use strict';
+
+    // IIFE so these consts don't clash with receiver.js globals
+    (() => {
+
+    const testNs = 'urn:x-cast:io.music-assistant.cast';
+    const mpEl = document.querySelector('cast-media-player');
+    const frameEl = document.getElementById('dashboard-frame');
+    const results = [];
+
+    function check(label, actual, expected) {
+      results.push({ label, pass: actual === expected, actual, expected });
+    }
+
+    // startup: options and idle timer armed (player is IDLE, no dashboard)
+    check('started with disableIdleTimeout', startOptions && startOptions.disableIdleTimeout, true);
+    check('custom namespace registered as JSON', startOptions && startOptions.customNamespaces[testNs], 'JSON');
+    check('idle shutdown timer armed at startup', armedTimers.size, 1);
+    check('idle shutdown delay is 300s', [...armedTimers.values()][0].ms, 300000);
+
+    // --- sender-gated idle shutdown: a connected sender keeps the app alive --
+    connectedSenders = [{ id: 'sender-x' }];
+    contextEventListeners['SENDER_CONNECTED']();
+    check('idle shutdown timer cleared while a sender is connected', armedTimers.size, 0);
+    connectedSenders = [];
+    contextEventListeners['SENDER_DISCONNECTED']();
+    check('idle shutdown timer re-armed when last sender disconnects', armedTimers.size, 1);
+
+    // --- audio-only flow (no dashboard yet): stock receiver behavior -----
+    // no LOAD interceptor anymore: playback state flows in via MEDIA_STATUS
+    check('media player visible without dashboard', mpEl.hidden, false);
+    check('dashboard hidden without dashboard message', frameEl.hidden, true);
+
+    playerState = 'PLAYING';
+    eventListeners['MEDIA_STATUS']();
+    check('idle shutdown timer cleared while playing', armedTimers.size, 0);
+
+    playerState = 'IDLE';
+    eventListeners['MEDIA_STATUS']();
+    check('idle shutdown timer re-armed after playback ends', armedTimers.size, 1);
+    [...armedTimers.values()][0].fn();
+    check('context.stop called on idle timeout', stopCalls.length, 1);
+
+    // malformed show_dashboard (missing url) is ignored
+    customMessageListeners[testNs]({
+      senderId: 'sender-0',
+      data: { type: 'show_dashboard' },
+    });
+    check('malformed show_dashboard ignored', frameEl.hidden, true);
+
+    // --- dashboard flow ---------------------------------------------------
+    const dashboardUrl =
+      'https://app.music-assistant.io/stable/?remote_id=remote-123&dashboard=code-456&path=%2Fparty';
+    customMessageListeners[testNs]({
+      senderId: 'sender-1',
+      data: { type: 'show_dashboard', url: dashboardUrl },
+    });
+
+    check('dashboard iframe shown', frameEl.hidden, false);
+    check('media player hidden', mpEl.hidden, true);
+    check('dashboard-active class set on body', document.body.classList.contains('dashboard-active'), true);
+    // CAF injects <touch-controls> lazily on touch devices when media plays;
+    // the CSS must suppress it even when it appears after the dashboard did
+    const touchControls = document.body.appendChild(document.createElement('touch-controls'));
+    check('late-injected touch-controls suppressed while dashboard active',
+      getComputedStyle(touchControls).display, 'none');
+    check('media player suppressed by CSS while dashboard active',
+      getComputedStyle(mpEl).display, 'none');
+    check('iframe src set verbatim from message url', frameEl.src, dashboardUrl);
+    check('reply sent on same namespace', sentMessages[0] && sentMessages[0].namespace, testNs);
+    check('reply target is requesting sender', sentMessages[0] && sentMessages[0].senderId, 'sender-1');
+    check(
+      'reply payload',
+      sentMessages[0] && JSON.stringify(sentMessages[0].data),
+      JSON.stringify({ type: 'receiver_status', connected: true })
+    );
+    check('idle shutdown timer cleared while dashboard active', armedTimers.size, 0);
+
+    // --- keepalive: touch displays deactivate media-less apps after ~10 min
+    const keepaliveUrl = location.origin + '/keepalive.png';
+    check('keepalive interval armed while dashboard active (touch)', armedIntervals.size, 1);
+    check('keepalive repeats every 9 minutes', [...armedIntervals.values()][0].ms, 540000);
+    check('keepalive media loaded immediately (player was idle)', mediaLoads.length, 1);
+    check('keepalive contentId', mediaLoads[0] && mediaLoads[0].media.contentId, keepaliveUrl);
+    check('keepalive streamType NONE', mediaLoads[0] && mediaLoads[0].media.streamType, 'NONE');
+    // a tick while the keepalive item is current reloads it (activity decays)
+    [...armedIntervals.values()][0].fn();
+    check('keepalive reloaded on tick', mediaLoads.length, 2);
+
+    // --- coexistence: playback starts while the dashboard is showing -----
+    currentMedia = { contentId: 'http://example/track.mp3' }; // real LOAD replaced keepalive
+    playerState = 'PLAYING';
+    eventListeners['MEDIA_STATUS']();
+    // a keepalive tick during real playback must not clobber the music
+    [...armedIntervals.values()][0].fn();
+    check('keepalive skips while real media plays', mediaLoads.length, 2);
+    check('dashboard stays visible while audio plays behind it', frameEl.hidden, false);
+    check('media player stays hidden while audio plays under dashboard', mpEl.hidden, true);
+    check('no idle timer while playing under dashboard', armedTimers.size, 0);
+
+    // playback ends but the dashboard keeps the session alive
+    playerState = 'IDLE';
+    eventListeners['MEDIA_STATUS']();
+    check('no idle timer after playback ends while dashboard active', armedTimers.size, 0);
+
+    // --- hide_dashboard: hand the screen back to the media UI --------------
+    playerState = 'PLAYING';
+    eventListeners['MEDIA_STATUS']();
+    customMessageListeners[testNs]({ senderId: 'sender-1', data: { type: 'hide_dashboard' } });
+    check('dashboard iframe hidden after hide_dashboard', frameEl.hidden, true);
+    check('iframe src set to about:blank after hide_dashboard', frameEl.getAttribute('src'), 'about:blank');
+    check('media player visible after hide_dashboard', mpEl.hidden, false);
+    check('dashboard-active class removed after hide_dashboard', document.body.classList.contains('dashboard-active'), false);
+    check('touch-controls no longer suppressed after hide_dashboard',
+      getComputedStyle(touchControls).display !== 'none', true);
+    check('hide reply sent', sentMessages[sentMessages.length - 1].data.connected, true);
+    check('keepalive interval cleared on hide', armedIntervals.size, 0);
+    check('real media not stopped by hide (not the keepalive item)', playerStopCalls.length, 0);
+    check('no idle timer while still playing after hide', armedTimers.size, 0);
+    playerState = 'IDLE';
+    eventListeners['MEDIA_STATUS']();
+    check('idle timer re-armed after hide + playback end', armedTimers.size, 1);
+    armedTimers.clear();
+
+    // hide while the keepalive image is the current media stops it
+    customMessageListeners[testNs]({
+      senderId: 'sender-1',
+      data: {
+        type: 'show_dashboard',
+        url: 'https://app.music-assistant.io/stable/?remote_id=r2&dashboard=c2&path=%2Fparty',
+      },
+    });
+    check('keepalive re-armed on second show', armedIntervals.size, 1);
+    check('keepalive reloaded on second show (player idle)',
+      currentMedia && currentMedia.contentId, keepaliveUrl);
+    customMessageListeners[testNs]({ senderId: 'sender-1', data: { type: 'hide_dashboard' } });
+    check('keepalive media stopped on hide', playerStopCalls.length, 1);
+    armedTimers.clear();
+
+    // a different url is iframed verbatim (receiver does no url building)
+    const betaUrl = 'https://app.music-assistant.io/beta/?remote_id=r&dashboard=c&path=%2F';
+    customMessageListeners[testNs]({
+      senderId: 'sender-2',
+      data: { type: 'show_dashboard', url: betaUrl },
+    });
+    check('iframe src set verbatim from second url', frameEl.src, betaUrl);
+
+    document.getElementById('results').innerHTML = results
+      .map(r => `<div class="${r.pass ? 'pass' : 'fail'}">${r.pass ? 'PASS' : 'FAIL'} — ${r.label}` +
+        (r.pass ? '' : ` (expected ${JSON.stringify(r.expected)}, got ${JSON.stringify(r.actual)})`) +
+        `</div>`)
+      .join('');
+    const failed = results.filter(r => !r.pass).length;
+    document.title = failed === 0 ? 'test.html — all passed' : `test.html — ${failed} FAILED`;
+
+    })();
+  </script>
+</body>
+
+</html>
