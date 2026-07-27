@@ -187,10 +187,10 @@ coexistence and idle-shutdown behavior can be checked in a plain browser
     );
     check('idle shutdown timer cleared while dashboard active', armedTimers.size, 0);
 
-    // --- keepalive: touch displays deactivate media-less apps after ~10 min
+    // --- keepalive: touch displays deactivate media-less apps after ~3.5 min
     const keepaliveUrl = location.origin + '/keepalive.png';
     check('keepalive interval armed while dashboard active (touch)', armedIntervals.size, 1);
-    check('keepalive repeats every 9 minutes', [...armedIntervals.values()][0].ms, 540000);
+    check('keepalive repeats every 2 minutes', [...armedIntervals.values()][0].ms, 120000);
     check('keepalive media loaded immediately (player was idle)', mediaLoads.length, 1);
     check('keepalive contentId', mediaLoads[0] && mediaLoads[0].media.contentId, keepaliveUrl);
     check('keepalive streamType NONE', mediaLoads[0] && mediaLoads[0].media.streamType, 'NONE');
