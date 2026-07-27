@@ -46,11 +46,13 @@ function updateIdleShutdownTimer() {
   }
 }
 
-// Smart displays deactivate apps without media activity after ~10 minutes,
-// independent of disableIdleTimeout. While a dashboard is shown without real
-// playback, (re)loading a lightweight local image as media every 9 minutes
-// keeps the app active - same approach as the Home Assistant cast receiver.
-const KEEPALIVE_INTERVAL_SEC = 540;
+// Smart displays deactivate apps without media activity after ~3.5 minutes
+// (measured on a Nest Hub), independent of disableIdleTimeout. While a dashboard
+// is shown without real playback, periodically (re)loading a lightweight local
+// image as media keeps the app active - same approach as the Home Assistant
+// cast receiver. Each reload opens a new media session, which is what resets
+// the platform timer; the media itself may stay paused.
+const KEEPALIVE_INTERVAL_SEC = 120;
 const KEEPALIVE_CONTENT_ID = location.origin + '/keepalive.png';
 let keepaliveTimer = null;
 
