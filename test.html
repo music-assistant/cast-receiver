@@ -78,7 +78,8 @@ coexistence and idle-shutdown behavior can be checked in a plain browser
     window.cast = {
       framework: {
         messages: {
-          MessageType: { PLAY: 'PLAY', LOAD: 'LOAD' },
+          MessageType: { PLAY: 'PLAY', LOAD: 'LOAD', QUEUE_UPDATE: 'QUEUE_UPDATE' },
+          Command: { ALL_BASIC_MEDIA: 12303, QUEUE_NEXT: 64, QUEUE_PREV: 128 },
           PlayerState: { IDLE: 'IDLE', PLAYING: 'PLAYING' },
           StreamType: { BUFFERED: 'BUFFERED' },
           RepeatMode: { REPEAT_SINGLE: 'REPEAT_SINGLE' },
@@ -264,6 +265,34 @@ coexistence and idle-shutdown behavior can be checked in a plain browser
       data: { type: 'show_dashboard', url: betaUrl },
     });
     check('iframe src set verbatim from second url', frameEl.src, betaUrl);
+
+    // --- next/previous controls (support #2969) --------------------------
+    // The Cast UI only draws next/prev when these bits are advertised, and the
+    // SDK's own gate rejects jump requests without them.
+    check('queue commands advertised at startup',
+      startOptions && startOptions.supportedCommands, 12303 | 64 | 128);
+
+    const queueUpdate = messageInterceptors['QUEUE_UPDATE'];
+    const msgCountBeforeJump = sentMessages.length;
+
+    check('forward next: swallowed locally', queueUpdate({ jump: 1 }), null);
+    check('forward next: message broadcast on MA namespace',
+      sentMessages[msgCountBeforeJump] && sentMessages[msgCountBeforeJump].namespace, testNs);
+    check('forward next: broadcast to all senders',
+      sentMessages[msgCountBeforeJump] && sentMessages[msgCountBeforeJump].senderId, undefined);
+    check('forward next: payload',
+      sentMessages[msgCountBeforeJump] && JSON.stringify(sentMessages[msgCountBeforeJump].data),
+      JSON.stringify({ type: 'player_command', command: 'next' }));
+
+    check('forward previous: swallowed locally', queueUpdate({ jump: -1 }), null);
+    check('forward previous: payload',
+      sentMessages[msgCountBeforeJump + 1] && JSON.stringify(sentMessages[msgCountBeforeJump + 1].data),
+      JSON.stringify({ type: 'player_command', command: 'previous' }));
+
+    // a non-jump QUEUE_UPDATE (e.g. repeatMode) must pass through untouched
+    const repeatUpdate = { repeatMode: 'REPEAT_ALL' };
+    check('non-jump QUEUE_UPDATE passed through', queueUpdate(repeatUpdate), repeatUpdate);
+    check('non-jump QUEUE_UPDATE sends nothing', sentMessages.length, msgCountBeforeJump + 2);
 
     document.getElementById('results').innerHTML = results
       .map(r => `<div class="${r.pass ? 'pass' : 'fail'}">${r.pass ? 'PASS' : 'FAIL'} — ${r.label}` +

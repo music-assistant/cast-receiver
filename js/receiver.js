@@ -2,6 +2,9 @@
 
 const NAMESPACE = 'urn:x-cast:io.music-assistant.cast';
 
+// Sent to the server when the device's own UI asks for a queue jump.
+const PLAYER_COMMAND_TYPE = 'player_command';
+
 // Mirrors CAF's built-in ~5 min idle-application timeout, replicated below.
 const IDLE_SHUTDOWN_SEC = 300;
 
@@ -154,6 +157,19 @@ playerManager.setMessageInterceptor(
   }
 )
 
+// Next/previous arrive as a QUEUE_UPDATE jump (QUEUE_NEXT/QUEUE_PREV are not
+// interceptable); MA owns the queue, so forward and stop CAF touching its own.
+playerManager.setMessageInterceptor(
+  cast.framework.messages.MessageType.QUEUE_UPDATE, data => {
+    if (!data || typeof data.jump !== 'number' || data.jump === 0) return data;
+    context.sendCustomMessage(NAMESPACE, undefined, {
+      type: PLAYER_COMMAND_TYPE,
+      command: data.jump > 0 ? 'next' : 'previous',
+    });
+    return null;
+  }
+)
+
 // Audio and dashboard coexist in one session: a LOAD while a dashboard is
 // shown plays behind it (the dashboard renders the now-playing state itself);
 // the media player UI is only visible when no dashboard is active.
@@ -178,6 +194,12 @@ const options = new cast.framework.CastReceiverOptions();
 // The built-in idle timeout would kill long-running dashboard sessions; we
 // disable it and replicate the idle shutdown ourselves for audio-only sessions.
 options.disableIdleTimeout = true;
+// Without these bits the Cast UI draws no next/previous button and the SDK
+// rejects jump requests before they reach our interceptor.
+options.supportedCommands =
+  cast.framework.messages.Command.ALL_BASIC_MEDIA |
+  cast.framework.messages.Command.QUEUE_NEXT |
+  cast.framework.messages.Command.QUEUE_PREV;
 options.customNamespaces = { [NAMESPACE]: cast.framework.system.MessageType.JSON };
 context.start(options);
 updateIdleShutdownTimer();
