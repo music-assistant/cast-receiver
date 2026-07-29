@@ -79,11 +79,13 @@ coexistence and idle-shutdown behavior can be checked in a plain browser
       framework: {
         messages: {
           MessageType: { PLAY: 'PLAY', LOAD: 'LOAD' },
-          PlayerState: { IDLE: 'IDLE' },
-          StreamType: { NONE: 'NONE' },
+          PlayerState: { IDLE: 'IDLE', PLAYING: 'PLAYING' },
+          StreamType: { BUFFERED: 'BUFFERED' },
+          RepeatMode: { REPEAT_SINGLE: 'REPEAT_SINGLE' },
           LoadRequestData: function () {},
           MediaInformation: function () {},
           GenericMediaMetadata: function () {},
+          QueueData: function () {},
         },
         events: { EventType: { MEDIA_STATUS: 'MEDIA_STATUS' } },
         system: {
@@ -187,16 +189,23 @@ coexistence and idle-shutdown behavior can be checked in a plain browser
     );
     check('idle shutdown timer cleared while dashboard active', armedTimers.size, 0);
 
-    // --- keepalive: touch displays deactivate media-less apps after ~3.5 min
-    const keepaliveUrl = location.origin + '/keepalive.png';
+    // --- keepalive: touch displays deactivate media-less apps and reclaim the
+    // screen for ambient mode; a silent looping video held in PLAYING prevents both
+    const keepaliveUrl = location.origin + '/dashboard-keepalive.mp4';
     check('keepalive interval armed while dashboard active (touch)', armedIntervals.size, 1);
     check('keepalive repeats every 2 minutes', [...armedIntervals.values()][0].ms, 120000);
     check('keepalive media loaded immediately (player was idle)', mediaLoads.length, 1);
     check('keepalive contentId', mediaLoads[0] && mediaLoads[0].media.contentId, keepaliveUrl);
-    check('keepalive streamType NONE', mediaLoads[0] && mediaLoads[0].media.streamType, 'NONE');
-    // a tick while the keepalive item is current reloads it (activity decays)
+    check('keepalive contentType video/mp4', mediaLoads[0] && mediaLoads[0].media.contentType, 'video/mp4');
+    check('keepalive streamType BUFFERED', mediaLoads[0] && mediaLoads[0].media.streamType, 'BUFFERED');
+    check('keepalive loops via REPEAT_SINGLE', mediaLoads[0] && mediaLoads[0].queueData.repeatMode, 'REPEAT_SINGLE');
+    // a tick while the keepalive item hasn't reported PLAYING yet is a recovery reload
     [...armedIntervals.values()][0].fn();
-    check('keepalive reloaded on tick', mediaLoads.length, 2);
+    check('keepalive reloaded on tick while not yet playing', mediaLoads.length, 2);
+    // once the keepalive video is actually looping (PLAYING), a tick must not reload it
+    playerState = 'PLAYING';
+    [...armedIntervals.values()][0].fn();
+    check('healthy looping keepalive not reloaded on tick', mediaLoads.length, 2);
 
     // --- coexistence: playback starts while the dashboard is showing -----
     currentMedia = { contentId: 'http://example/track.mp3' }; // real LOAD replaced keepalive
@@ -233,7 +242,7 @@ coexistence and idle-shutdown behavior can be checked in a plain browser
     check('idle timer re-armed after hide + playback end', armedTimers.size, 1);
     armedTimers.clear();
 
-    // hide while the keepalive image is the current media stops it
+    // hide while the keepalive video is the current media stops it
     customMessageListeners[testNs]({
       senderId: 'sender-1',
       data: {
