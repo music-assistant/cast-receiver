@@ -46,14 +46,10 @@ function updateIdleShutdownTimer() {
   }
 }
 
-// Smart displays deactivate apps without media activity after ~3.5 minutes
-// (measured on a Nest Hub), independent of disableIdleTimeout. While a dashboard
-// is shown without real playback, periodically (re)loading a lightweight local
-// image as media keeps the app active - same approach as the Home Assistant
-// cast receiver. Each reload opens a new media session, which is what resets
-// the platform timer; the media itself may stay paused.
+// A silent looping video held in PLAYING stops smart displays from deactivating
+// the app or handing the screen to ambient mode (paused/audio-only media don't).
 const KEEPALIVE_INTERVAL_SEC = 120;
-const KEEPALIVE_CONTENT_ID = location.origin + '/keepalive.png';
+const KEEPALIVE_CONTENT_ID = location.origin + '/dashboard-keepalive.mp4';
 let keepaliveTimer = null;
 
 function playKeepaliveMedia() {
@@ -61,11 +57,13 @@ function playKeepaliveMedia() {
   loadRequest.autoplay = true;
   loadRequest.media = new cast.framework.messages.MediaInformation();
   loadRequest.media.contentId = KEEPALIVE_CONTENT_ID;
-  loadRequest.media.contentType = 'image/png';
-  loadRequest.media.streamType = cast.framework.messages.StreamType.NONE;
+  loadRequest.media.contentType = 'video/mp4';
+  loadRequest.media.streamType = cast.framework.messages.StreamType.BUFFERED;
   const metadata = new cast.framework.messages.GenericMediaMetadata();
   metadata.title = 'Music Assistant';
   loadRequest.media.metadata = metadata;
+  loadRequest.queueData = new cast.framework.messages.QueueData();
+  loadRequest.queueData.repeatMode = cast.framework.messages.RepeatMode.REPEAT_SINGLE;
   loadRequest.requestId = 0;
   playerManager.load(loadRequest);
 }
@@ -74,9 +72,9 @@ function keepaliveTick() {
   // real playback already keeps the app active - never clobber it
   const info = playerManager.getMediaInformation();
   const isKeepalive = !!info && info.contentId === KEEPALIVE_CONTENT_ID;
-  const playerIdle =
-    playerManager.getPlayerState() === cast.framework.messages.PlayerState.IDLE;
-  if (!playerIdle && !isKeepalive) return;
+  const state = playerManager.getPlayerState();
+  if (isKeepalive && state === cast.framework.messages.PlayerState.PLAYING) return;
+  if (!isKeepalive && state !== cast.framework.messages.PlayerState.IDLE) return;
   playKeepaliveMedia();
 }
 
