@@ -63,7 +63,8 @@ coexistence and idle-shutdown behavior can be checked in a plain browser
       stop() { playerStopCalls.push(true); currentMedia = null; playerState = 'IDLE'; },
     };
 
-    let touchSupported = true;
+    // no touch input: the keepalive must arm on Android TV / plain TVs too
+    let touchSupported = false;
     const mockContext = {
       getPlayerManager() { return mockPlayerManager; },
       addCustomMessageListener(namespace, cb) { customMessageListeners[namespace] = cb; },
@@ -189,10 +190,10 @@ coexistence and idle-shutdown behavior can be checked in a plain browser
     );
     check('idle shutdown timer cleared while dashboard active', armedTimers.size, 0);
 
-    // --- keepalive: touch displays deactivate media-less apps and reclaim the
-    // screen for ambient mode; a silent looping video held in PLAYING prevents both
+    // --- keepalive: ambient mode (smart displays) and the Android TV screensaver
+    // both reclaim the screen from media-less apps; a looping silent video prevents both
     const keepaliveUrl = location.origin + '/dashboard-keepalive.mp4';
-    check('keepalive interval armed while dashboard active (touch)', armedIntervals.size, 1);
+    check('keepalive interval armed while dashboard active (no touch input)', armedIntervals.size, 1);
     check('keepalive repeats every 2 minutes', [...armedIntervals.values()][0].ms, 120000);
     check('keepalive media loaded immediately (player was idle)', mediaLoads.length, 1);
     check('keepalive contentId', mediaLoads[0] && mediaLoads[0].media.contentId, keepaliveUrl);

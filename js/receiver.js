@@ -46,8 +46,8 @@ function updateIdleShutdownTimer() {
   }
 }
 
-// A silent looping video held in PLAYING stops smart displays from deactivating
-// the app or handing the screen to ambient mode (paused/audio-only media don't).
+// A silent looping video held in PLAYING keeps the dashboard on screen: smart
+// displays deactivate media-less apps and Android TV screensaves over them.
 const KEEPALIVE_INTERVAL_SEC = 120;
 const KEEPALIVE_CONTENT_ID = location.origin + '/dashboard-keepalive.mp4';
 let keepaliveTimer = null;
@@ -79,9 +79,6 @@ function keepaliveTick() {
 }
 
 function startKeepalive() {
-  const capabilities = context.getDeviceCapabilities();
-  // only touch displays (Nest Hub) deactivate idle apps
-  if (!capabilities || !capabilities.touch_input_supported) return;
   if (keepaliveTimer !== null) return;
   keepaliveTick();
   keepaliveTimer = setInterval(keepaliveTick, KEEPALIVE_INTERVAL_SEC * 1000);
