@@ -167,6 +167,13 @@ playerManager.setMessageInterceptor(
   }
 )
 
+// Music Assistant's streams have no length, so a seek from the device UI, a voice
+// command or another sender runs past the end and leaves the receiver buffering.
+// A seek in Music Assistant itself loads a new stream instead.
+playerManager.setMessageInterceptor(
+  cast.framework.messages.MessageType.SEEK, () => null
+)
+
 // Audio and dashboard coexist in one session: a LOAD while a dashboard is
 // shown plays behind it (the dashboard renders the now-playing state itself);
 // the media player UI is only visible when no dashboard is active.
@@ -193,8 +200,9 @@ const options = new cast.framework.CastReceiverOptions();
 options.disableIdleTimeout = true;
 // Without these bits the Cast UI draws no next/previous button and the SDK
 // rejects jump requests before they reach our interceptor.
+// Leaving out SEEK tells the Cast UI and sender apps to disable seeking.
 options.supportedCommands =
-  cast.framework.messages.Command.ALL_BASIC_MEDIA |
+  (cast.framework.messages.Command.ALL_BASIC_MEDIA & ~cast.framework.messages.Command.SEEK) |
   cast.framework.messages.Command.QUEUE_NEXT |
   cast.framework.messages.Command.QUEUE_PREV;
 options.customNamespaces = { [NAMESPACE]: cast.framework.system.MessageType.JSON };
